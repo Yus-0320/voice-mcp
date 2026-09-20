@@ -8,13 +8,15 @@ An MCP (Model Context Protocol) server for AI voice synthesis with an inline aud
 
 This repository is a fork of [garan0613/voice-mcp](https://github.com/garan0613/voice-mcp), released under the MIT License.
 
-This fork lives at [Yinglianchun/voice-mcp](https://github.com/Yinglianchun/voice-mcp) and keeps the original MCP `speak(text)` behavior while adding provider switching, ElevenLabs support, and a live visualizer panel.
+This fork lives at [Yus-0320/voice-mcp](https://github.com/Yus-0320/voice-mcp), builds on [Yinglianchun/voice-mcp](https://github.com/Yinglianchun/voice-mcp), and keeps the original MCP `speak(text)` behavior while adding provider switching, ElevenLabs support, Moss support, and a live visualizer panel.
 
 ## What Changed in This Fork
 
-- Added `TTS_PROVIDER` switching between DashScope/CosyVoice and ElevenLabs.
+- Added `TTS_PROVIDER` switching between DashScope/CosyVoice, ElevenLabs, and Moss.
 - Kept the old `speak(text)` call compatible, and extended it to `speak(text, style?, raw_tags?)`.
+- Added model-facing guidance so an AI can decide on its own when a spoken reply adds value, without forcing voice on every turn.
 - Added ElevenLabs TTS support with configurable model, output format, voice settings, and optional v3 audio tags.
+- Added Moss TTS support through the Moss API with configurable voice, model, language, and speed.
 - Added style-to-tag mapping for ElevenLabs v3, while stripping raw audio tags before DashScope/CosyVoice calls.
 - Added `/status` fields for provider, model, voice, configuration state, and audio tag availability.
 - Added `/panel`, a breathing audio visualizer that listens for the latest MCP `speak` result.
@@ -24,7 +26,7 @@ This fork lives at [Yinglianchun/voice-mcp](https://github.com/Yinglianchun/voic
 
 ## Features
 
-- **Custom Voice Cloning** — Use DashScope Qwen-TTS Voice Cloning API or ElevenLabs TTS with your own cloned voice
+- **Custom Voice Cloning** — Use DashScope Qwen-TTS, ElevenLabs, or Moss with your own configured voice
 - **Inline Audio Player** — Beautiful WeChat-style player with waveform visualization
 - **Breathing Visualizer Panel** — Use `/panel` to listen for the latest MCP `speak` output
 - **Transcript Toggle** — Show/hide the spoken text
@@ -44,7 +46,7 @@ When you call the `speak` tool, you get:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Yinglianchun/voice-mcp.git
+git clone https://github.com/Yus-0320/voice-mcp.git
 cd voice-mcp
 ```
 
@@ -59,7 +61,7 @@ npm install
 Set the provider. If omitted, the worker uses DashScope.
 
 ```bash
-npx wrangler secret put TTS_PROVIDER  # dashscope or elevenlabs
+npx wrangler secret put TTS_PROVIDER  # dashscope, elevenlabs, or moss
 ```
 
 #### DashScope / CosyVoice
@@ -107,6 +109,29 @@ npx wrangler secret put ELEVENLABS_SPEED          # Example: 1.20
 `eleven_v3` supports audio tags such as `[whispers]`, `[sighs]`, and `[laughs]`.
 `eleven_multilingual_v2` is a steadier choice for ordinary reading.
 
+#### Moss
+
+Moss uses the official Moss API single-speaker speech endpoint and returns MP3 audio to the existing inline player.
+
+Add the required secrets:
+
+```bash
+npx wrangler secret put MOSS_API_KEY
+npx wrangler secret put MOSS_VOICE_ID
+```
+
+Optional:
+
+```bash
+npx wrangler secret put MOSS_MODEL     # Default: moss-tts-1.5-flash
+npx wrangler secret put MOSS_LANGUAGE  # Optional language hint
+npx wrangler secret put MOSS_SPEED     # Optional, 0.25-4.0
+```
+
+Then set `TTS_PROVIDER` to `moss`.
+
+The Worker sends `POST https://api.mosi.cn/v1/audio/speech` with `delivery_method=audio` and `response_format=mp3`. Moss `voice_id` must be an existing voice ID from the Moss voice library or one you created through the Moss voice APIs.
+
 ### 4. Deploy
 
 ```bash
@@ -123,7 +148,7 @@ npx wrangler deploy
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TTS_PROVIDER` | No | `dashscope` or `elevenlabs`; defaults to `dashscope` |
+| `TTS_PROVIDER` | No | `dashscope`, `elevenlabs`, or `moss`; defaults to `dashscope` |
 | `DASHSCOPE_API_KEY` | DashScope | Your DashScope API key |
 | `VOICE_ID` | DashScope | The cloned voice ID (Qwen-TTS VC) |
 | `BOT_NAME` | No | Display name (default: "AI") |
@@ -142,6 +167,11 @@ npx wrangler deploy
 | `ELEVENLABS_STYLE` | No | ElevenLabs voice setting override, such as `0.85` |
 | `ELEVENLABS_USE_SPEAKER_BOOST` | No | ElevenLabs voice setting override, `true` or `false` |
 | `ELEVENLABS_SPEED` | No | ElevenLabs voice setting override, such as `1.20` |
+| `MOSS_API_KEY` | Moss | Moss API key; keep it in a Cloudflare secret |
+| `MOSS_VOICE_ID` | Moss | Moss voice ID |
+| `MOSS_MODEL` | No | Moss model (default: `moss-tts-1.5-flash`) |
+| `MOSS_LANGUAGE` | No | Optional Moss language hint |
+| `MOSS_SPEED` | No | Optional Moss speed override, `0.25`- `4.0` |
 
 ## API Endpoints
 
@@ -166,6 +196,8 @@ speak(text: string, style?: string, raw_tags?: boolean)
 
 Existing `speak(text)` calls remain compatible.
 
+The `speak` tool description deliberately gives the connected model discretion to use voice when spoken delivery adds meaningful warmth, presence, emphasis, reassurance, playfulness, celebration, or similar vocal value. It also tells the model not to speak on every turn. No separate text marker is required. The MCP host still needs to permit normal model-initiated tool calls for this behavior to happen.
+
 When the MCP `speak` tool succeeds, the Worker stores the latest voice event for
 `/panel`. Keep `/panel` open while using `speak`; when a new voice arrives, the
 visualizer loads it and enables playback.
@@ -186,7 +218,7 @@ supported styles map to ElevenLabs v3 audio tags:
 | `laughing` | `[laughs]` |
 | `curious` | `[curious]` |
 
-DashScope/CosyVoice and non-v3 ElevenLabs calls strip raw audio tags before sending text to the provider.
+DashScope/CosyVoice, Moss, and non-v3 ElevenLabs calls strip ElevenLabs-style raw audio tags before sending text to the provider. Moss pause markers such as `[pause 0.8s]` are preserved because they are not ElevenLabs-style tags.
 
 ## Tech Stack
 
@@ -194,6 +226,7 @@ DashScope/CosyVoice and non-v3 ElevenLabs calls strip raw audio tags before send
 - [MCP SDK](https://github.com/modelcontextprotocol/sdk) — Model Context Protocol
 - [DashScope Qwen-TTS VC](https://dashscope.aliyun.com/) — Voice synthesis
 - [ElevenLabs Text to Speech](https://elevenlabs.io/docs/api-reference/text-to-speech/convert) — Voice synthesis
+- [Moss API](https://platform.mosi.cn/) — Moss voice synthesis
 - [ext-apps](https://modelcontextprotocol.io/docs/concepts/ext-apps) — Inline UI rendering
 
 ## License
